@@ -1,0 +1,24 @@
+{
+  "name": "My Plan Tracker - برنامه پایش عادات",
+  "short_name": "My Plan",
+  "description": "سامانه هوشمند پایش و تثبیت عادات روزانه و برنامه‌ریزی ماهانه",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0F172A",
+  "theme_color": "#1E293B",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
