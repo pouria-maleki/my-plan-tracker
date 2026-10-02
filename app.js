@@ -229,6 +229,11 @@ const app = {
       this.renderCalendarHeatmap();
       this.renderStats();
       this.renderSettings();
+
+      // Pull latest from GitHub cloud if configured!
+      if (this.githubToken) {
+        this.pullFromGitHub();
+      }
     } catch (err) {
       // Decryption failed (Wrong Password or Tampered Data)
       const errEl = document.getElementById('lockError');
@@ -260,14 +265,156 @@ const app = {
     document.getElementById('lockScreen').classList.remove('hidden');
   },
 
+  githubRepo: 'pouria-maleki/my-plan-tracker',
+  githubToken: localStorage.getItem('myplan_gh_token') || '',
+
   async saveState() {
     if (!this.state || !this.currentPassword) return;
     try {
       // Encrypt updated state with current password before saving to disk
       const encrypted = await CryptoVault.encrypt(this.state, this.currentPassword);
       localStorage.setItem('myplan_encrypted_vault', JSON.stringify(encrypted));
+      
+      // Auto Cloud Sync to GitHub if token is set!
+      if (this.githubToken) {
+        this.pushToGitHub(encrypted);
+      }
     } catch (e) {
       console.error('Encryption save error:', e);
+    }
+  },
+
+  async pushToGitHub(encryptedVault) {
+    if (!this.githubToken) return;
+    try {
+      const payloadStr = JSON.stringify(encryptedVault, null, 2);
+      const b64Content = btoa(unescape(encodeURIComponent(payloadStr)));
+      
+      // Get current SHA of data.enc if exists
+      let sha = null;
+      try {
+        const getRes = await fetch(`https://api.github.com/repos/${this.githubRepo}/contents/data.enc`, {
+          headers: {
+            'Authorization': `Bearer ${this.githubToken}`,
+            'Accept': 'application/vnd.github+json'
+          }
+        });
+        if (getRes.ok) {
+          const getJson = await getRes.json();
+          sha = getJson.sha;
+        }
+      } catch (err) {}
+
+      // Commit encrypted data.enc to GitHub repo
+      const putRes = await fetch(`https://api.github.com/repos/${this.githubRepo}/contents/data.enc`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${this.githubToken}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: 'Update encrypted habits data [skip ci]',
+          content: b64Content,
+          sha: sha
+        })
+      });
+
+      if (putRes.ok) {
+        this.showToast('همگام‌سازی ابری با گیت‌هاب انجام شد ☁️✅');
+        this.updateSyncBadge(true);
+      }
+    } catch (err) {
+      console.warn('GitHub Sync warning:', err);
+    }
+  },
+
+  async pullFromGitHub() {
+    if (!this.githubToken) return;
+    try {
+      const res = await fetch(`https://api.github.com/repos/${this.githubRepo}/contents/data.enc`, {
+        headers: {
+          'Authorization': `Bearer ${this.githubToken}`,
+          'Accept': 'application/vnd.github+json'
+        }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const rawCiphertext = decodeURIComponent(escape(atob(json.content)));
+        const encryptedVault = JSON.parse(rawCiphertext);
+        
+        // Decrypt with current password
+        const decrypted = await CryptoVault.decrypt(encryptedVault, this.currentPassword);
+        if (decrypted && decrypted.habits) {
+          this.state = decrypted;
+          localStorage.setItem('myplan_encrypted_vault', JSON.stringify(encryptedVault));
+          this.renderToday();
+          this.renderCalendarHeatmap();
+          this.renderStats();
+          this.showToast('اطلاعات جدید از گیت‌هاب دریافت شد ☁️');
+          this.updateSyncBadge(true);
+        }
+      }
+    } catch (err) {
+      console.warn('Pull from GitHub warning:', err);
+    }
+  },
+
+  setupGitHubSync() {
+    const current = localStorage.getItem('myplan_gh_token') || '';
+    const token = prompt('لطفاً توکن شخصی گیت‌هاب (Personal Access Token) خود را وارد کنید:\n(برای قطع اتصال، کادر را خالی بگذارید)', current);
+    
+    if (token !== null) {
+      const cleanToken = token.trim();
+      if (cleanToken) {
+        this.githubToken = cleanToken;
+        localStorage.setItem('myplan_gh_token', cleanToken);
+        this.showToast('در حال تست اتصال به گیت‌هاب...');
+        
+        // Test connection
+        fetch(`https://api.github.com/repos/${this.githubRepo}`, {
+          headers: { 'Authorization': `Bearer ${cleanToken}` }
+        }).then(res => {
+          if (res.ok) {
+            this.showToast('اتصال به گیت‌هاب با موفقیت برقرار شد! ☁️🎉');
+            this.updateSyncBadge(true);
+            // Push current state to GitHub
+            if (this.state && this.currentPassword) {
+              this.saveState();
+            }
+          } else {
+            alert('توکن معتبر نیست یا دسترسی repo ندارد. لطفاً توکن را بررسی کنید.');
+          }
+        }).catch(() => {
+          alert('خطا در اتصال به اینترنت.');
+        });
+      } else {
+        this.githubToken = '';
+        localStorage.removeItem('myplan_gh_token');
+        this.showToast('همگام‌سازی ابری غیرفعال شد.');
+        this.updateSyncBadge(false);
+      }
+    }
+  },
+
+  showTokenGuide() {
+    alert(
+      'راهنمای ساخت توکن اختصاصی گیت‌هاب (۳۰ ثانیه):\n\n' +
+      '۱. در گیت‌هاب وارد Settings > Developer Settings شوید.\n' +
+      '۲. روی Personal access tokens > Tokens (classic) کلیک کنید.\n' +
+      '۳. روی Generate new token (classic) کلیک کنید.\n' +
+      '۴. یک نام دلخواه بگذارید (مثلاً MyPlan) و تیک گزینه repo را بزنید.\n' +
+      '۵. در پایین صفحه دکمه سبز Generate token را بزنید.\n' +
+      '۶. توکن ساخته‌شده (شروع با ghp_...) را کپی کرده و در این کادر قرار دهید.\n\n' +
+      'از این پس تمام تیک‌های شما روی گیت‌هاب در فایلی رمزنگاری‌شده (data.enc) خودکار ذخیره می‌شود!'
+    );
+  },
+
+  updateSyncBadge(isActive) {
+    const el = document.getElementById('ghSyncStatus');
+    if (el) {
+      el.textContent = isActive ? 'وضعیت: متصل و همگام با گیت‌هاب ☁️' : 'وضعیت: ذخیره محلی (آفلاین)';
+      el.style.color = isActive ? '#10B981' : '';
     }
   },
 

@@ -261,6 +261,24 @@
           </div>
         </div>
 
+        <!-- GitHub Cloud Sync Card -->
+        <div class="settings-card">
+          <h4 class="settings-card-title">☁️ همگام‌سازی خودکار با گیت‌هاب (Cloud Sync)</h4>
+          <p class="settings-desc-para">
+            با فعال‌سازی این قابلیت، هر تیکی که روی گوشی می‌زنید به صورت خودکار و <strong>۱۰۰٪ رمزنگاری‌شده (AES-256)</strong> در گیت‌هاب ذخیره می‌شود و در کامپیوتر نیز فوراً همگام خواهد بود.
+          </p>
+          <div class="settings-row">
+            <div>
+              <div class="setting-name">اتصال به مخزن گیت‌هاب</div>
+              <div class="setting-desc" id="ghSyncStatus">وضعیت: ذخیره محلی (آفلاین)</div>
+            </div>
+            <button class="btn btn-primary" onclick="app.setupGitHubSync()">اتصال به گیت‌هاب ☁️</button>
+          </div>
+          <div style="margin-top: 8px;">
+            <button class="text-link-btn" onclick="app.showTokenGuide()">راهنمای ساخت توکن اختصاصی (در ۳۰ ثانیه) ℹ️</button>
+          </div>
+        </div>
+
         <!-- Backup & Sync Card -->
         <div class="settings-card">
           <h4 class="settings-card-title">💾 پشتیبان‌گیری و انتقال دیتا</h4>
