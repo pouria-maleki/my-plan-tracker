@@ -107,15 +107,24 @@ const app = {
   currentTab: 'tabToday',
   activeMonth: 7, // مهر
   activeYear: 1405,
-  currentDateOffset: 1, // Offset 1 = Tomorrow (Saturday 11 Mehr 1405)
+  currentDateOffset: 0, // 0 = TODAY ALWAYS! Shows today's real date dynamically
   selectedDateStr: '',
   enteredPin: '',
-  defaultPin: '1404',
+  defaultPin: '2580',
   currentPassword: '',
   
   // In-Memory Decrypted State (Wiped on Lock!)
   state: null,
   isLocked: true,
+
+  // GitHub Cloud Sync
+  githubRepo: 'pouria-maleki/my-plan-tracker',
+  githubToken: localStorage.getItem('myplan_gh_token') || '',
+
+  // Pomodoro Timer State
+  pomodoroTimeLeft: 25 * 60,
+  pomodoroTimerId: null,
+  pomodoroRunning: false,
 
   // Default Habits Schema
   defaultHabits: [
@@ -136,6 +145,14 @@ const app = {
     { id: 'h15', title: 'آموختن یک نکته یا مهارت جدید', icon: '💡', goal: 31 }
   ],
 
+  // Default Initial Tasks
+  defaultTasks: [
+    { id: 't1', title: 'بررسی نتایج شبیه‌سازی میکروگرید و تحلیل داده‌ها', time: '10:30', done: false },
+    { id: 't2', title: 'ویرایش بخش متدولوژی و ارجاعات مقاله ISI', time: '15:00', done: false },
+    { id: 't3', title: 'تمرین مضراب‌نوازی و کوک ساز سه تار', time: '19:30', done: false },
+    { id: 't4', title: 'مرور لغات تخصصی و مکالمه زبان انگلیسی', time: '21:00', done: false }
+  ],
+
   async init() {
     this.calcInitialDate();
     this.renderHeader();
@@ -145,11 +162,15 @@ const app = {
     // Check if encrypted vault exists
     const vaultStr = localStorage.getItem('myplan_encrypted_vault');
     if (!vaultStr) {
-      // First run: Create encrypted vault with default password (1404)
+      // First run: Create encrypted vault with default password (2580)
       const initialState = {
         habits: this.defaultHabits,
         checks: {},
-        water: {}
+        water: {},
+        tasks: {
+          [this.selectedDateStr]: this.defaultTasks
+        },
+        journal: {}
       };
       const encrypted = await CryptoVault.encrypt(initialState, this.defaultPin);
       localStorage.setItem('myplan_encrypted_vault', JSON.stringify(encrypted));
@@ -160,6 +181,7 @@ const app = {
   },
 
   calcInitialDate() {
+    // Current Gregorian Date (Offset = 0 -> TODAY)
     const now = new Date();
     now.setDate(now.getDate() + this.currentDateOffset);
     
@@ -181,7 +203,6 @@ const app = {
       this.playTickAudio();
 
       if (this.enteredPin.length === 4) {
-        // Try unlock with 4 digits first
         setTimeout(() => this.attemptUnlock(this.enteredPin), 150);
       }
     }
@@ -211,9 +232,29 @@ const app = {
 
     try {
       const encryptedVault = JSON.parse(vaultStr);
-      // Decrypt AES-256-GCM vault using entered password
-      const decrypted = await CryptoVault.decrypt(encryptedVault, password);
+      let decrypted = null;
+
+      try {
+        decrypted = await CryptoVault.decrypt(encryptedVault, password);
+      } catch (err) {
+        // Legacy vault migration
+        if (password === '2580') {
+          try {
+            decrypted = await CryptoVault.decrypt(encryptedVault, '1404');
+            const reEncrypted = await CryptoVault.encrypt(decrypted, '2580');
+            localStorage.setItem('myplan_encrypted_vault', JSON.stringify(reEncrypted));
+          } catch (e2) {}
+        }
+      }
+
+      if (!decrypted) {
+        throw new Error('Invalid Password');
+      }
       
+      // Ensure tasks & journal structures exist
+      if (!decrypted.tasks) decrypted.tasks = {};
+      if (!decrypted.journal) decrypted.journal = {};
+
       // Decryption Succeeded!
       this.state = decrypted;
       this.currentPassword = password;
@@ -222,22 +263,22 @@ const app = {
       this.updatePinDots();
 
       document.getElementById('lockScreen').classList.add('hidden');
-      this.showToast('قفل رمزنگاری‌شده باز شد ✨');
+      this.showToast('ورود موفقیت‌آمیز بود ✨');
 
       // Render all views with decrypted memory state
       this.renderToday();
       this.renderCalendarHeatmap();
       this.renderStats();
       this.renderSettings();
+      this.renderTasks();
 
       // Pull latest from GitHub cloud if configured!
       if (this.githubToken) {
         this.pullFromGitHub();
       }
     } catch (err) {
-      // Decryption failed (Wrong Password or Tampered Data)
       const errEl = document.getElementById('lockError');
-      errEl.textContent = 'رمز عبور اشتباه است (دسترسی نامعتبر)';
+      errEl.textContent = 'رمز عبور اشتباه است';
       this.vibrate([100, 50, 100]);
       setTimeout(() => {
         this.enteredPin = '';
@@ -248,7 +289,7 @@ const app = {
   },
 
   async promptCustomPasswordUnlock() {
-    const pass = prompt('رمز عبور متنی / اختصاصی خود را وارد کنید:');
+    const pass = prompt('رمز عبور را وارد کنید:');
     if (pass) {
       await this.attemptUnlock(pass);
     }
@@ -265,17 +306,13 @@ const app = {
     document.getElementById('lockScreen').classList.remove('hidden');
   },
 
-  githubRepo: 'pouria-maleki/my-plan-tracker',
-  githubToken: localStorage.getItem('myplan_gh_token') || '',
-
   async saveState() {
     if (!this.state || !this.currentPassword) return;
     try {
-      // Encrypt updated state with current password before saving to disk
       const encrypted = await CryptoVault.encrypt(this.state, this.currentPassword);
       localStorage.setItem('myplan_encrypted_vault', JSON.stringify(encrypted));
       
-      // Auto Cloud Sync to GitHub if token is set!
+      // Auto Cloud Sync to GitHub if token is set
       if (this.githubToken) {
         this.pushToGitHub(encrypted);
       }
@@ -290,7 +327,6 @@ const app = {
       const payloadStr = JSON.stringify(encryptedVault, null, 2);
       const b64Content = btoa(unescape(encodeURIComponent(payloadStr)));
       
-      // Get current SHA of data.enc if exists
       let sha = null;
       try {
         const getRes = await fetch(`https://api.github.com/repos/${this.githubRepo}/contents/data.enc`, {
@@ -305,7 +341,6 @@ const app = {
         }
       } catch (err) {}
 
-      // Commit encrypted data.enc to GitHub repo
       const putRes = await fetch(`https://api.github.com/repos/${this.githubRepo}/contents/data.enc`, {
         method: 'PUT',
         headers: {
@@ -314,14 +349,14 @@ const app = {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          message: 'Update encrypted habits data [skip ci]',
+          message: 'Update encrypted habits & tasks data [skip ci]',
           content: b64Content,
           sha: sha
         })
       });
 
       if (putRes.ok) {
-        this.showToast('همگام‌سازی ابری با گیت‌هاب انجام شد ☁️✅');
+        this.showToast('همگام‌سازی با گیت‌هاب انجام شد ☁️✅');
         this.updateSyncBadge(true);
       }
     } catch (err) {
@@ -343,14 +378,16 @@ const app = {
         const rawCiphertext = decodeURIComponent(escape(atob(json.content)));
         const encryptedVault = JSON.parse(rawCiphertext);
         
-        // Decrypt with current password
         const decrypted = await CryptoVault.decrypt(encryptedVault, this.currentPassword);
         if (decrypted && decrypted.habits) {
+          if (!decrypted.tasks) decrypted.tasks = {};
+          if (!decrypted.journal) decrypted.journal = {};
           this.state = decrypted;
           localStorage.setItem('myplan_encrypted_vault', JSON.stringify(encryptedVault));
           this.renderToday();
           this.renderCalendarHeatmap();
           this.renderStats();
+          this.renderTasks();
           this.showToast('اطلاعات جدید از گیت‌هاب دریافت شد ☁️');
           this.updateSyncBadge(true);
         }
@@ -371,14 +408,12 @@ const app = {
         localStorage.setItem('myplan_gh_token', cleanToken);
         this.showToast('در حال تست اتصال به گیت‌هاب...');
         
-        // Test connection
         fetch(`https://api.github.com/repos/${this.githubRepo}`, {
           headers: { 'Authorization': `Bearer ${cleanToken}` }
         }).then(res => {
           if (res.ok) {
             this.showToast('اتصال به گیت‌هاب با موفقیت برقرار شد! ☁️🎉');
             this.updateSyncBadge(true);
-            // Push current state to GitHub
             if (this.state && this.currentPassword) {
               this.saveState();
             }
@@ -425,14 +460,13 @@ const app = {
       return;
     }
 
-    const newPass = prompt('رمز جدید دلخواه را وارد کنید (می‌تواند عدد یا متن باشد):');
+    const newPass = prompt('رمز جدید دلخواه را وارد کنید:');
     if (!newPass || newPass.trim().length < 4) {
       alert('رمز باید حداقل ۴ کاراکتر باشد.');
       return;
     }
 
     try {
-      // Re-encrypt the existing decrypted state with the new password
       this.currentPassword = newPass.trim();
       await this.saveState();
       this.showToast('رمز با موفقیت تغییر کرد و تمام دیتا دوباره رمزنگاری شد 🔐');
@@ -492,7 +526,7 @@ const app = {
     const title = `${this.currentDayName}، ${this.currentJalali.day} ${JalaliDate.monthNames[this.activeMonth - 1]} ${this.activeYear}`;
     document.getElementById('todayDateTitle').textContent = title;
     
-    const sub = (this.currentDateOffset === 0) ? 'امروز - ثبت عملکرد روزانه' : (this.currentDateOffset === 1 ? 'فردا - آغاز هفته پرانرژی 🚀' : 'پایش روزانه عادات');
+    const sub = (this.currentDateOffset === 0) ? 'امروز - ثبت عملکرد روزانه' : (this.currentDateOffset === 1 ? 'فردا - برنامه‌ریزی روز بعد' : (this.currentDateOffset === -1 ? 'دیروز - مرور عملکرد' : 'پایش روزانه'));
     document.getElementById('todayDateSub').textContent = sub;
 
     const list = document.getElementById('todayHabitsList');
@@ -535,15 +569,196 @@ const app = {
 
     const quotes = [
       'شروع از قدم‌های کوچک آغاز بزرگترین دستاوردهاست ✨',
-      'پایداری رمز موفقیت است؛ فردا اولین روز هفته است! 🚀',
-      'فوق‌العاده پیش رفتی! انضباط یعنی پیروزی بر فردا 🌟',
+      'پایداری رمز موفقیت است؛ استمرار امروز آینده‌ات را می‌سازد! 🚀',
+      'فوق‌العاده پیش رفتی! انضباط یعنی پیروزی بر اهمال‌کاری 🌟',
       'عالی بود! تمام عادات امروز تکمیل شد 🏆'
     ];
     document.getElementById('todayMotivation').textContent = pct === 100 ? quotes[3] : (pct >= 50 ? quotes[2] : quotes[1]);
 
     this.renderWater();
+    this.renderTasks();
+    this.renderJournal();
   },
 
+  // --- DAILY TASKS & TO-DO (With Strikethrough & Time Picker) ---
+  renderTasks() {
+    if (!this.state) return;
+    const list = document.getElementById('todayTasksList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const dayTasks = this.state.tasks[this.selectedDateStr] || [];
+    const doneCount = dayTasks.filter(t => t.done).length;
+
+    const badge = document.getElementById('tasksBadge');
+    if (badge) {
+      badge.textContent = `${doneCount} از ${dayTasks.length} انجام شد`;
+    }
+
+    if (dayTasks.length === 0) {
+      list.innerHTML = `
+        <div class="empty-tasks-placeholder">
+          <span>کاری برای این روز ثبت نشده است. روی «+ کار جدید» بزنید.</span>
+        </div>
+      `;
+      return;
+    }
+
+    dayTasks.forEach(task => {
+      const card = document.createElement('div');
+      card.className = `task-card ${task.done ? 'task-done' : ''}`;
+
+      card.innerHTML = `
+        <div class="task-left" onclick="app.toggleTask('${task.id}')">
+          <div class="task-checkbox ${task.done ? 'checked' : ''}">
+            ${task.done ? '✓' : ''}
+          </div>
+          <span class="task-title ${task.done ? 'completed-text' : ''}">${task.title}</span>
+        </div>
+        <div class="task-right">
+          <button class="task-time-badge" onclick="event.stopPropagation(); app.promptEditTaskTime('${task.id}')" title="تغییر ساعت">
+            ⏰ ${task.time || 'تعیین ساعت'}
+          </button>
+          <button class="task-action-btn delete" onclick="event.stopPropagation(); app.deleteTask('${task.id}')" title="حذف">
+            ✕
+          </button>
+        </div>
+      `;
+      list.appendChild(card);
+    });
+  },
+
+  async promptAddTask() {
+    if (!this.state) return;
+    const title = prompt('عنوان کار یا برنامه جدید را وارد کنید:');
+    if (!title || !title.trim()) return;
+
+    const time = prompt('ساعت انجام کار را وارد کنید (مثلاً ۱۶:۳۰ یا صبح):', '16:00') || '';
+
+    if (!this.state.tasks[this.selectedDateStr]) {
+      this.state.tasks[this.selectedDateStr] = [];
+    }
+
+    this.state.tasks[this.selectedDateStr].push({
+      id: 't_' + Date.now(),
+      title: title.trim(),
+      time: time.trim(),
+      done: false
+    });
+
+    await this.saveState();
+    this.playTickAudio();
+    this.renderTasks();
+    this.showToast('کار جدید به لیست اضافه شد 📋');
+  },
+
+  async toggleTask(taskId) {
+    if (!this.state) return;
+    const dayTasks = this.state.tasks[this.selectedDateStr] || [];
+    const task = dayTasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    task.done = !task.done;
+    await this.saveState();
+    this.vibrate(35);
+
+    if (task.done) {
+      this.playSuccessAudio();
+    } else {
+      this.playTickAudio();
+    }
+
+    this.renderTasks();
+  },
+
+  async promptEditTaskTime(taskId) {
+    if (!this.state) return;
+    const dayTasks = this.state.tasks[this.selectedDateStr] || [];
+    const task = dayTasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const newTime = prompt(`ساعت جدید برای «${task.title}»:`, task.time || '18:00');
+    if (newTime !== null) {
+      task.time = newTime.trim();
+      await this.saveState();
+      this.renderTasks();
+      this.showToast('ساعت با موفقیت تغییر کرد ⏰');
+    }
+  },
+
+  async deleteTask(taskId) {
+    if (!this.state) return;
+    const dayTasks = this.state.tasks[this.selectedDateStr] || [];
+    this.state.tasks[this.selectedDateStr] = dayTasks.filter(t => t.id !== taskId);
+    await this.saveState();
+    this.renderTasks();
+    this.showToast('کار حذف شد');
+  },
+
+  // --- DAILY JOURNAL ---
+  renderJournal() {
+    if (!this.state) return;
+    const el = document.getElementById('journalInput');
+    if (el) {
+      el.value = this.state.journal[this.selectedDateStr] || '';
+    }
+  },
+
+  async saveJournalNote() {
+    if (!this.state) return;
+    const el = document.getElementById('journalInput');
+    if (!el) return;
+    this.state.journal[this.selectedDateStr] = el.value.trim();
+    await this.saveState();
+    this.showToast('یادداشت روزانه ذخیره شد 📝');
+  },
+
+  // --- POMODORO TIMER ---
+  togglePomodoro() {
+    if (this.pomodoroRunning) {
+      this.pausePomodoro();
+    } else {
+      this.startPomodoro();
+    }
+  },
+
+  startPomodoro() {
+    this.pomodoroRunning = true;
+    document.getElementById('pomodoroBtn').textContent = 'توقف ⏸️';
+    this.pomodoroTimerId = setInterval(() => {
+      if (this.pomodoroTimeLeft > 0) {
+        this.pomodoroTimeLeft--;
+        this.updatePomodoroDisplay();
+      } else {
+        this.pausePomodoro();
+        this.playSuccessAudio();
+        alert('🎉 پومودورو ۲۵ دقیقه‌ای با موفقیت تکمیل شد! ۵ دقیقه استراحت کنید.');
+        this.resetPomodoro();
+      }
+    }, 1000);
+  },
+
+  pausePomodoro() {
+    this.pomodoroRunning = false;
+    clearInterval(this.pomodoroTimerId);
+    document.getElementById('pomodoroBtn').textContent = 'شروع تمرکز ▶️';
+  },
+
+  resetPomodoro() {
+    this.pausePomodoro();
+    this.pomodoroTimeLeft = 25 * 60;
+    this.updatePomodoroDisplay();
+  },
+
+  updatePomodoroDisplay() {
+    const mins = Math.floor(this.pomodoroTimeLeft / 60);
+    const secs = this.pomodoroTimeLeft % 60;
+    const text = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    const el = document.getElementById('pomodoroDisplay');
+    if (el) el.textContent = text;
+  },
+
+  // --- Water Tracker ---
   renderWater() {
     if (!this.state) return;
     const grid = document.getElementById('glassesGrid');
@@ -859,7 +1074,6 @@ const app = {
   // --- Backup & Export ---
   exportBackup() {
     if (!this.state) return;
-    // Export raw encrypted vault or JSON
     const vaultStr = localStorage.getItem('myplan_encrypted_vault');
     const blob = new Blob([vaultStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -878,10 +1092,9 @@ const app = {
     reader.onload = async (e) => {
       try {
         const text = e.target.result;
-        // Verify it's valid JSON
         JSON.parse(text);
         localStorage.setItem('myplan_encrypted_vault', text);
-        this.showToast('فایل بارگذاری شد؛ لطفاً قفل را با رمز بکاپ باز کنید.');
+        this.showToast('فایل بارگذاری شد؛ لطفاً قفل را باز کنید.');
         this.lockApp();
       } catch (err) {
         alert('فایل بکاپ نامعتبر است.');
@@ -914,6 +1127,8 @@ const app = {
       if (this.state) {
         this.state.checks = {};
         this.state.water = {};
+        this.state.tasks = {};
+        this.state.journal = {};
         await this.saveState();
         this.renderToday();
         this.renderCalendarHeatmap();

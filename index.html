@@ -65,7 +65,6 @@
           </svg>
         </button>
       </div>
-      <p class="pin-hint">رمز پیش‌فرض: <strong>۱۴۰۴</strong></p>
       <button class="text-link-btn" onclick="app.promptCustomPasswordUnlock()">ورود با رمز متنی یا طولانی‌تر 🔑</button>
     </div>
   </div>
@@ -105,7 +104,7 @@
             <button class="date-arrow-btn" onclick="app.prevDay()">❮</button>
             <div class="date-center">
               <h2 id="todayDateTitle" class="hero-date-title">شنبه، ۱۱ مهر ۱۴۰۵</h2>
-              <span id="todayDateSub" class="hero-date-sub">امروز - آغاز هفته پرانرژی</span>
+              <span id="todayDateSub" class="hero-date-sub">امروز - ثبت عملکرد روزانه</span>
             </div>
             <button class="date-arrow-btn" onclick="app.nextDay()">❯</button>
           </div>
@@ -119,7 +118,21 @@
             <div class="progress-bar-bg">
               <div id="todayProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
             </div>
-            <p id="todayMotivation" class="today-quote">فردا روز اول هفته است؛ با قدرت شروع کن! 🚀</p>
+            <p id="todayMotivation" class="today-quote">شروع از قدم‌های کوچک آغاز بزرگترین دستاوردهاست ✨</p>
+          </div>
+        </div>
+
+        <!-- DAILY TASKS & TO-DO (With Strikethrough & Time Setting) -->
+        <div class="tasks-section">
+          <div class="section-title-wrap">
+            <div class="title-with-badge">
+              <h3 class="section-title">📋 کارهای زمان‌دار امروز (To-Do)</h3>
+              <span class="section-badge" id="tasksBadge">۰ از ۴ انجام شد</span>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="app.promptAddTask()">+ کار جدید</button>
+          </div>
+          <div id="todayTasksList" class="tasks-list">
+            <!-- Dynamic task cards with strike-through and time -->
           </div>
         </div>
 
@@ -149,6 +162,36 @@
           </div>
           <div class="glasses-grid" id="glassesGrid">
             <!-- 8 glasses rendered here -->
+          </div>
+        </div>
+
+        <!-- Pomodoro Focus Timer Card -->
+        <div class="pomodoro-card">
+          <div class="pomodoro-header">
+            <span class="pomodoro-icon">⏱️</span>
+            <div>
+              <h4 class="pomodoro-title">تایمر تمرکز پومودورو (۲۵ دقیقه)</h4>
+              <span class="pomodoro-sub">برای مقاله، شبیه‌سازی یا تمرین سه تار</span>
+            </div>
+          </div>
+          <div class="pomodoro-body">
+            <div class="pomodoro-display" id="pomodoroDisplay">25:00</div>
+            <div class="pomodoro-controls">
+              <button class="btn btn-primary" id="pomodoroBtn" onclick="app.togglePomodoro()">شروع تمرکز ▶️</button>
+              <button class="btn btn-secondary" onclick="app.resetPomodoro()">ریست 🔄</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Daily Journal Card -->
+        <div class="journal-card">
+          <div class="journal-header">
+            <span class="journal-icon">📝</span>
+            <h4 class="journal-title">یادداشت و دستاوردهای امروز</h4>
+          </div>
+          <textarea id="journalInput" class="journal-textarea" placeholder="نکات مهم، دستاوردهای روز یا شکرگزاری امروز را اینجا بنویسید..." onchange="app.saveJournalNote()"></textarea>
+          <div class="journal-actions">
+            <button class="btn btn-sm btn-secondary" onclick="app.saveJournalNote()">ذخیره یادداشت 💾</button>
           </div>
         </div>
       </section>
